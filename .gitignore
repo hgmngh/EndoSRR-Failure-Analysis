@@ -1,0 +1,28 @@
+# Python 캐시
+__pycache__/
+*.py[cod]
+.DS_Store
+
+# 가상환경 및 개인 설정
+.env
+.env.*
+.venv/
+.vscode/
+
+# 연구 데이터 및 출력 결과
+data/
+image/
+images/
+output/
+outputs/
+results/
+EndoRR_Dataset/
+
+# 모델 가중치
+pretrained/
+checkpoints/
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+*.zip

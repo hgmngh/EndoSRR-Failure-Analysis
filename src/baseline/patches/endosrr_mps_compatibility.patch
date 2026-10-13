@@ -1,0 +1,46 @@
+diff --git a/EndoSRR.py b/EndoSRR.py
+index f00b4d1..15f6b2e 100644
+--- a/EndoSRR.py
++++ b/EndoSRR.py
+@@ -83,7 +83,7 @@ def eval_psnr(loader, model, data_norm=None, eval_type=None, eval_bsize=None,
+ 
+     for batch in pbar:
+         for k, v in batch.items():
+-            batch[k] = v.cuda()
++            batch[k] = v.to(device)
+ 
+         inp = batch['inp']
+         # print((batch['gt']).shape)
+@@ -117,7 +117,7 @@ def img_process(path):
+                              std=[0.229, 0.224, 0.225])
+     ])
+ 
+-    inp_sam = img_trans(image).unsqueeze(0).cuda()
++    inp_sam = img_trans(image).unsqueeze(0).to(device)
+     inp_inpa = np.array(image)
+ 
+     return inp_sam, inp_inpa
+@@ -142,8 +142,8 @@ if __name__ == '__main__':
+ 
+     with open(args.config, 'r') as f:
+         config = yaml.load(f, Loader=yaml.FullLoader)
+-    model = modelSAM.make(config['model']).cuda()
+-    sam_checkpoint = torch.load(args.model, map_location='cuda:0')
++    model = modelSAM.make(config['model']).to(device)
++    sam_checkpoint = torch.load(args.model, map_location=device)
+     model.load_state_dict(sam_checkpoint, strict=True)
+ 
+     if not os.path.exists(args.save_mask_path):
+diff --git a/lama/saicinpainting/training/trainers/__init__.py b/lama/saicinpainting/training/trainers/__init__.py
+index c59241f..5f604f4 100644
+--- a/lama/saicinpainting/training/trainers/__init__.py
++++ b/lama/saicinpainting/training/trainers/__init__.py
+@@ -24,7 +24,7 @@ def make_training_model(config):
+ 
+ def load_checkpoint(train_config, path, map_location='cuda', strict=True):
+     model: torch.nn.Module = make_training_model(train_config)
+-    state = torch.load(path, map_location=map_location)
++    state = torch.load(path, map_location=map_location, weights_only=False)
+     model.load_state_dict(state['state_dict'], strict=strict)
+     model.on_load_checkpoint(state)
+     return model
