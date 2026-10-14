@@ -1,60 +1,64 @@
+import argparse
+from pathlib import Path
+
 import cv2
 import numpy as np
-import os
 
-# 경로 설정
-original_dir = "image"
-result_dir = "output/final_inpaint"
-save_dir = "output/difference"
+from common import ENDOSRR_DIR, read_image
 
-os.makedirs(save_dir, exist_ok=True)
 
-# 차이로 판단할 기준값
-threshold = 30
+EXTENSIONS = {".png", ".jpg", ".jpeg"}
 
-for filename in os.listdir(original_dir):
 
-    if not filename.lower().endswith((".png", ".jpg", ".jpeg")):
-        continue
+def difference_overlay(original, restored, threshold=30):
+    if original.shape != restored.shape:
+        raise ValueError(f"Image sizes differ: {original.shape} != {restored.shape}")
 
-    original_path = os.path.join(original_dir, filename)
-    result_path = os.path.join(result_dir, filename)
+    changed = np.max(cv2.absdiff(original, restored), axis=2) > threshold
+    overlay = original.copy()
+    overlay[changed] = (0, 0, 255)  # BGR red
+    return overlay, float(changed.mean() * 100)
 
-    if not os.path.exists(result_path):
-        continue
 
-    # 원본 / EndoSRR 결과 불러오기
-    original = cv2.imread(original_path)
-    result = cv2.imread(result_path)
+def main():
+    parser = argparse.ArgumentParser(description="Highlight changed pixels after inpainting.")
+    parser.add_argument("--image-dir", type=Path, default=ENDOSRR_DIR / "image")
+    parser.add_argument("--inpaint-dir", type=Path, default=ENDOSRR_DIR / "output/final_inpaint")
+    parser.add_argument("--output-dir", type=Path, default=ENDOSRR_DIR / "output/difference")
+    parser.add_argument("--threshold", type=int, default=30)
+    args = parser.parse_args()
 
-    # 혹시 이미지 크기가 다르면 맞춰주기
-    if original.shape != result.shape:
-        result = cv2.resize(
-            result,
-            (original.shape[1], original.shape[0])
-        )
+    if not 0 <= args.threshold <= 255:
+        parser.error("--threshold must be between 0 and 255")
+    if not args.image_dir.is_dir():
+        parser.error(f"Image directory not found: {args.image_dir}")
 
-    # 픽셀별 RGB 차이 계산
-    diff = cv2.absdiff(original, result)
+    image_paths = sorted(p for p in args.image_dir.iterdir() if p.suffix.lower() in EXTENSIONS)
+    if not image_paths:
+        parser.error(f"No images found in: {args.image_dir}")
 
-    # RGB 중 하나라도 30 이상 달라졌으면 변경 픽셀로 판단
-    changed = np.max(diff, axis=2) > threshold
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    processed = 0
 
-    # 원본을 복사해서 시각화 이미지 생성
-    visualization = original.copy()
+    for image_path in image_paths:
+        restored_path = args.inpaint_dir / image_path.name
+        if not restored_path.is_file():
+            print(f"Skipping {image_path.name}: restored image not found")
+            continue
 
-    # 변경된 픽셀을 빨간색으로 표시
-    visualization[changed] = [0, 0, 255]
+        original = read_image(image_path)
+        restored = read_image(restored_path)
+        overlay, changed_pct = difference_overlay(original, restored, args.threshold)
 
-    # 저장
-    save_path = os.path.join(save_dir, filename)
-    cv2.imwrite(save_path, visualization)
+        output_path = args.output_dir / image_path.name
+        if not cv2.imwrite(str(output_path), overlay):
+            raise OSError(f"Failed to save: {output_path}")
+        print(f"{image_path.name}: changed pixels {changed_pct:.2f}%")
+        processed += 1
 
-    # 변경된 픽셀 비율도 출력
-    changed_ratio = np.mean(changed) * 100
+    if processed == 0:
+        raise FileNotFoundError("No matching original/restored image pairs found")
 
-    print(filename)
-    print(f"Changed pixels: {changed_ratio:.2f}%")
-    print("--------------------")
 
-print("완료!")
+if __name__ == "__main__":
+    main()

@@ -1,57 +1,53 @@
-
+import argparse
 from pathlib import Path
+
 import cv2
-import numpy as np
 
-root = Path(__file__).resolve().parents[3]
-image_dir = root / "EndoSRR/image"
-mask_dir = root / "EndoSRR/output/final_mask"
-save_dir = root / "EndoSRR-Research/results/component_visualizations"
-save_dir.mkdir(parents=True, exist_ok=True)
+from common import ENDOSRR_DIR, RESULTS_DIR, find_pngs, read_binary_mask, read_image
 
-for mask_path in sorted(mask_dir.glob("*.png")):
-    image_path = image_dir / mask_path.name
 
-    image = cv2.imread(str(image_path))
-    mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
-
-    if image is None or mask is None:
-        print(f"파일 읽기 실패: {mask_path.name}")
-        continue
-
+def draw_components(image, mask):
     if image.shape[:2] != mask.shape:
-        print(f"이미지 크기 불일치: {mask_path.name}")
-        continue
+        raise ValueError(f"Image and mask sizes differ: {image.shape[:2]} != {mask.shape}")
 
-    binary = (mask > 0).astype(np.uint8)
-
-    count, labels, stats, _ = cv2.connectedComponentsWithStats(
-        binary, connectivity=8
+    count, _, stats, _ = cv2.connectedComponentsWithStats(
+        mask.astype("uint8"), connectivity=8
     )
+    result = image.copy()
 
-    visualization = image.copy()
-
-    for i in range(1, count):
-        x, y, w, h, area = stats[i]
-
+    # BGR: small (red), medium (yellow), large (green).
+    for region_id in range(1, count):
+        x, y, width, height, area = stats[region_id]
         if area <= 10:
-            color = (0, 0, 255)       # 빨강: 1~10 px
+            color = (0, 0, 255)
         elif area <= 100:
-            color = (0, 255, 255)     # 노랑: 11~100 px
+            color = (0, 255, 255)
         else:
-            color = (0, 255, 0)       # 초록: 101 px 이상
+            color = (0, 255, 0)
 
-        cv2.rectangle(
-            visualization,
-            (x, y),
-            (x + w - 1, y + h - 1),
-            color,
-            1
-        )
+        cv2.rectangle(result, (x, y), (x + width - 1, y + height - 1), color, 1)
 
-    save_path = save_dir / mask_path.name
-    cv2.imwrite(str(save_path), visualization)
+    return result, count - 1
 
-    print(f"{mask_path.name}: {count - 1}개 영역 시각화 완료")
 
-print
+def main():
+    parser = argparse.ArgumentParser(description="Draw boxes around predicted mask components.")
+    parser.add_argument("--image-dir", type=Path, default=ENDOSRR_DIR / "image")
+    parser.add_argument("--mask-dir", type=Path, default=ENDOSRR_DIR / "output/final_mask")
+    parser.add_argument("--output-dir", type=Path, default=RESULTS_DIR / "component_visualizations")
+    args = parser.parse_args()
+
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    for mask_path in find_pngs(args.mask_dir):
+        image = read_image(args.image_dir / mask_path.name)
+        mask = read_binary_mask(mask_path)
+        result, count = draw_components(image, mask)
+
+        output_path = args.output_dir / mask_path.name
+        if not cv2.imwrite(str(output_path), result):
+            raise OSError(f"Failed to save: {output_path}")
+        print(f"{mask_path.name}: {count} regions")
+
+
+if __name__ == "__main__":
+    main()

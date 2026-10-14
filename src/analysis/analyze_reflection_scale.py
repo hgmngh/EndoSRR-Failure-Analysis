@@ -1,52 +1,43 @@
-
+import argparse
 from pathlib import Path
 
 import cv2
 import pandas as pd
 
-# 입력 및 결과 저장 경로
-project_dir = Path(__file__).resolve().parents[3]
-mask_dir = project_dir / "EndoSRR/output/final_mask"
-save_dir = project_dir / "EndoSRR-Research/results"
-save_dir.mkdir(exist_ok=True)
+from common import ENDOSRR_DIR, RESULTS_DIR, find_pngs, read_binary_mask
 
-records = []
 
-for mask_path in sorted(mask_dir.glob("*.png")):
-    mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+def analyze_masks(mask_dir):
+    rows = []
 
-    if mask is None:
-        print(f"이미지 읽기 실패: {mask_path.name}")
-        continue
+    for path in find_pngs(mask_dir):
+        mask = read_binary_mask(path).astype("uint8")
+        count, _, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        image_area = mask.size
 
-    binary = (mask > 0).astype("uint8")
+        for region_id in range(1, count):
+            area = int(stats[region_id, cv2.CC_STAT_AREA])
+            rows.append({
+                "image": path.name,
+                "region_id": region_id,
+                "area_px": area,
+                "area_ratio_pct": area / image_area * 100,
+            })
 
-    # 연결된 흰색 영역 구분
-    count, labels, stats, centroids = (
-        cv2.connectedComponentsWithStats(binary, connectivity=8)
-    )
+    return pd.DataFrame(rows, columns=["image", "region_id", "area_px", "area_ratio_pct"])
 
-    height, width = binary.shape
-    image_area = height * width
 
-    # 0번은 배경이므로 제외
-    for region_id in range(1, count):
-        area = int(stats[region_id, cv2.CC_STAT_AREA])
+def main():
+    parser = argparse.ArgumentParser(description="Measure connected components in predicted masks.")
+    parser.add_argument("--mask-dir", type=Path, default=ENDOSRR_DIR / "output/final_mask")
+    parser.add_argument("--output", type=Path, default=RESULTS_DIR / "reflection_scale.csv")
+    args = parser.parse_args()
 
-        records.append({
-            "image": mask_path.name,
-            "region_id": region_id,
-            "area_px": area,
-            "area_ratio_pct": area / image_area * 100
-        })
+    result = analyze_masks(args.mask_dir)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    result.to_csv(args.output, index=False)
+    print(f"Regions: {len(result)} | Saved: {args.output}")
 
-df = pd.DataFrame(
-    records,
-    columns=["image", "region_id", "area_px", "area_ratio_pct"]
-)
 
-save_path = save_dir / "reflection_scale.csv"
-df.to_csv(save_path, index=False)
-
-print(f"분석된 영역 수: {len(df)}")
-print(f"CSV 저장 완료: {save_path}")
+if __name__ == "__main__":
+    main()

@@ -1,53 +1,52 @@
-
+import argparse
 from pathlib import Path
 
-import cv2
+import numpy as np
 import pandas as pd
 
-root = Path(__file__).resolve().parents[3]
-gt_dir = root / "EndoSRR/EndoRR_Dataset/test/mask"
-pred_dir = root / "EndoSRR/output/final_mask"
-save_path = root / "EndoSRR-Research/results/baseline_metrics.csv"
+from common import ENDOSRR_DIR, RESULTS_DIR, find_pngs, read_binary_mask
 
-records = []
 
-for gt_path in sorted(gt_dir.glob("*.png")):
-    pred_path = pred_dir / gt_path.name
-
-    gt = cv2.imread(str(gt_path), cv2.IMREAD_GRAYSCALE)
-    pred = cv2.imread(str(pred_path), cv2.IMREAD_GRAYSCALE)
-
-    if gt is None or pred is None:
-        print(f"파일 누락: {gt_path.name}")
-        continue
-
+def segmentation_metrics(gt, pred):
     if gt.shape != pred.shape:
-        print(f"크기 불일치: {gt_path.name}")
-        continue
+        raise ValueError(f"Mask sizes differ: {gt.shape} != {pred.shape}")
 
-    gt = gt > 0
-    pred = pred > 0
+    tp = int(np.count_nonzero(gt & pred))
+    fp = int(np.count_nonzero(~gt & pred))
+    fn = int(np.count_nonzero(gt & ~pred))
 
-    tp = int((gt & pred).sum())
-    fp = int((~gt & pred).sum())
-    fn = int((gt & ~pred).sum())
+    return {
+        "IoU": tp / (tp + fp + fn) if (tp + fp + fn) else 1.0,
+        "Dice": 2 * tp / (2 * tp + fp + fn) if (2 * tp + fp + fn) else 1.0,
+        "Precision": tp / (tp + fp) if (tp + fp) else 0.0,
+        "Recall": tp / (tp + fn) if (tp + fn) else 0.0,
+    }
 
-    iou = tp / (tp + fp + fn) if (tp + fp + fn) else 1.0
-    dice = 2 * tp / (2 * tp + fp + fn) if (2 * tp + fp + fn) else 1.0
-    precision = tp / (tp + fp) if (tp + fp) else 0.0
-    recall = tp / (tp + fn) if (tp + fn) else 0.0
 
-    records.append({
-        "image": gt_path.name,
-        "IoU": iou,
-        "Dice": dice,
-        "Precision": precision,
-        "Recall": recall,
-    })
+def evaluate(gt_dir, pred_dir):
+    rows = []
+    for gt_path in find_pngs(gt_dir):
+        pred_path = pred_dir / gt_path.name
+        gt = read_binary_mask(gt_path)
+        pred = read_binary_mask(pred_path)
+        rows.append({"image": gt_path.name, **segmentation_metrics(gt, pred)})
 
-df = pd.DataFrame(records)
-save_path.parent.mkdir(parents=True, exist_ok=True)
-df.to_csv(save_path, index=False)
+    return pd.DataFrame(rows, columns=["image", "IoU", "Dice", "Precision", "Recall"])
 
-print(df.to_string(index=False))
-print(f"\nCSV 저장 완료: {save_path}")
+
+def main():
+    parser = argparse.ArgumentParser(description="Evaluate predicted masks against reference masks.")
+    parser.add_argument("--gt-dir", type=Path, default=ENDOSRR_DIR / "EndoRR_Dataset/test/mask")
+    parser.add_argument("--pred-dir", type=Path, default=ENDOSRR_DIR / "output/final_mask")
+    parser.add_argument("--output", type=Path, default=RESULTS_DIR / "baseline_metrics.csv")
+    args = parser.parse_args()
+
+    result = evaluate(args.gt_dir, args.pred_dir)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    result.to_csv(args.output, index=False)
+    print(result.to_string(index=False))
+    print(f"Saved: {args.output}")
+
+
+if __name__ == "__main__":
+    main()
